@@ -31,8 +31,10 @@
 #include "local_debugger.h"
 
 #include "core/debugger/script_debugger.h"
+#include "core/debugger/structured_script_profiler.h"
 #include "core/os/main_loop.h"
 #include "core/os/os.h"
+#include "core/version.h"
 
 struct LocalDebugger::ScriptsProfiler {
 	struct ProfileInfoSort {
@@ -44,24 +46,86 @@ struct LocalDebugger::ScriptsProfiler {
 	double frame_time = 0;
 	uint64_t idle_accum = 0;
 	Vector<ScriptLanguage::ProfilingInfo> pinfo;
+	StructuredScriptProfilerWriter structured_writer;
+	StructuredScriptProfilerWriter::Options structured_options;
+	uint64_t structured_started_ticks_usec = 0;
+	uint64_t structured_sampled_frames = 0;
+	bool active = false;
+	bool structured = false;
+	bool writer_started = false;
 
-	void toggle(bool p_enable, const Array &p_opts) {
+	Error toggle(bool p_enable, const Array &p_opts) {
 		if (p_enable) {
+			ERR_FAIL_COND_V_MSG(active, ERR_ALREADY_IN_USE, "The local script profiler is already active.");
+
+			StructuredScriptProfilerWriter::Options parsed_options;
+			bool structured_requested = false;
+			Error error = StructuredScriptProfilerWriter::parse_options(p_opts, parsed_options, structured_requested);
+			ERR_FAIL_COND_V(error != OK, error);
+			if (structured_requested) {
+				ERR_FAIL_COND_V_MSG(!writer_started, ERR_UNAVAILABLE, "The structured script profiler writer is unavailable.");
+				error = structured_writer.preflight(parsed_options);
+				ERR_FAIL_COND_V(error != OK, error);
+			}
+
 			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
 				ScriptServer::get_language(i)->profiling_start();
 			}
 
-			print_line("BEGIN PROFILING");
 			pinfo.resize(32768);
+			active = true;
+			structured = structured_requested;
+			if (structured) {
+				structured_options = parsed_options;
+				structured_started_ticks_usec = OS::get_singleton()->get_ticks_usec();
+				structured_sampled_frames = 0;
+			} else {
+				print_line("BEGIN PROFILING");
+			}
+			return OK;
+		}
+
+		ERR_FAIL_COND_V_MSG(!active, ERR_UNCONFIGURED, "The local script profiler is not active.");
+		if (structured) {
+			StructuredScriptProfilerWriter::Snapshot snapshot;
+			snapshot.options = structured_options;
+			snapshot.engine_version = GODOT_VERSION_FULL_BUILD;
+			const String version_hash = GODOT_VERSION_HASH;
+			if (!version_hash.is_empty()) {
+				snapshot.engine_version += "." + version_hash.substr(0, 9);
+			}
+			snapshot.started_ticks_usec = structured_started_ticks_usec;
+			snapshot.stopped_ticks_usec = OS::get_singleton()->get_ticks_usec();
+			snapshot.sampled_frames = structured_sampled_frames;
+
+			int count = 0;
+			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+				count += ScriptServer::get_language(i)->profiling_get_accumulated_data(&pinfo.write[count], pinfo.size() - count);
+			}
+			const Error copy_error = StructuredScriptProfilerWriter::copy_functions(pinfo.ptr(), count, snapshot.functions);
+
+			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
+				ScriptServer::get_language(i)->profiling_stop();
+			}
+			active = false;
+			structured = false;
+			ERR_FAIL_COND_V(copy_error != OK, copy_error);
+			return structured_writer.enqueue(snapshot);
 		} else {
 			_print_frame_data(true);
 			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
 				ScriptServer::get_language(i)->profiling_stop();
 			}
+			active = false;
+			return OK;
 		}
 	}
 
 	void tick(double p_frame_time, double p_process_time, double p_physics_time, double p_physics_frame_time) {
+		if (structured) {
+			structured_sampled_frames++;
+			return;
+		}
 		frame_time = p_frame_time;
 		_print_frame_data(false);
 	}
@@ -111,6 +175,7 @@ struct LocalDebugger::ScriptsProfiler {
 
 	ScriptsProfiler() {
 		idle_accum = OS::get_singleton()->get_ticks_usec();
+		writer_started = structured_writer.start() == OK;
 	}
 };
 
@@ -382,7 +447,7 @@ LocalDebugger::LocalDebugger() {
 	Profiler scr_prof(
 			scripts_profiler,
 			[](void *p_user, bool p_enable, const Array &p_opts) {
-				static_cast<ScriptsProfiler *>(p_user)->toggle(p_enable, p_opts);
+				return static_cast<ScriptsProfiler *>(p_user)->toggle(p_enable, p_opts);
 			},
 			nullptr,
 			[](void *p_user, double p_frame_time, double p_process_time, double p_physics_time, double p_physics_frame_time) {
