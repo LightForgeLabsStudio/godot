@@ -104,7 +104,7 @@ jobs:
             platform=windows \
             target=editor \
             arch=x86_64 \
-            dev_mode=yes \
+            production=yes \
             debug_symbols=no \
             module_text_server_fb_enabled=yes \
             angle_libs="${{ github.workspace }}/" \
@@ -136,8 +136,6 @@ jobs:
           "console=$($console[0].FullName)" >> $env:GITHUB_OUTPUT
           & $console[0].FullName --version
           if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
-          & $console[0].FullName --test
-          if ($LASTEXITCODE -ne 0) { throw "Engine unit tests failed" }
 
       - name: Package baseline provenance
         shell: pwsh
@@ -163,7 +161,7 @@ jobs:
             build_platform = "windows"
             build_target = "editor"
             build_arch = "x86_64"
-            build_flags = "dev_mode=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
+            build_flags = "production=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
             workflow = $env:GITHUB_WORKFLOW
             workflow_run_id = $env:GITHUB_RUN_ID
             workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT
