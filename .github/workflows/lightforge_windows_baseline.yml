@@ -1,0 +1,182 @@
+name: Lightforge Windows baseline
+
+on:
+  pull_request:
+    branches:
+      - lightforge/4.6.3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightforge-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE_TAG: 4.6.3-stable
+  BASE_COMMIT: 35e80b3a8822a9df9be390814b62f44c0a9c69e8
+  BUILD_NAME: lightforge-baseline
+  SCONS_CACHE_MSVC_CONFIG: true
+  PYTHONIOENCODING: utf8
+
+jobs:
+  windows-editor:
+    name: Windows editor and console baseline
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout engine source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify upstream base
+        shell: pwsh
+        run: |
+          $tagCommit = git rev-list -n 1 $env:BASE_TAG
+          if ($tagCommit -ne $env:BASE_COMMIT) {
+            throw "Unexpected $env:BASE_TAG commit: $tagCommit"
+          }
+          git merge-base --is-ancestor $env:BASE_TAG HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "HEAD does not descend from $env:BASE_TAG"
+          }
+
+      - name: Restore build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: lightforge-windows-editor
+        continue-on-error: true
+
+      - name: Set up Python and SCons
+        uses: ./.github/actions/godot-deps
+        with:
+          scons-version: 4.10.1
+
+      - name: Download Direct3D 12 SDK components
+        id: d3d12-sdk
+        shell: bash
+        run: |
+          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
+            echo "enabled=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=no" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Download ANGLE static libraries
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: godotengine/godot-angle-static
+          version: tags/chromium/6601.2
+          file: godot-angle-static-x86_64-msvc-release.zip
+          target: angle/angle.zip
+
+      - name: Extract ANGLE static libraries
+        shell: pwsh
+        run: Expand-Archive -Force angle/angle.zip ${{ github.workspace }}
+
+      - name: Download AccessKit static libraries
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: godotengine/godot-accesskit-c-static
+          version: tags/0.21.2
+          file: accesskit-c-0.21.2.zip
+          target: accesskit-c-0.21.2/accesskit_c.zip
+
+      - name: Extract AccessKit static libraries
+        shell: bash
+        run: unzip -o accesskit-c-0.21.2/accesskit_c.zip
+
+      - name: Build Windows editor and console wrapper
+        shell: bash
+        run: |
+          scons \
+            platform=windows \
+            target=editor \
+            arch=x86_64 \
+            dev_mode=yes \
+            debug_symbols=no \
+            module_text_server_fb_enabled=yes \
+            angle_libs="${{ github.workspace }}/" \
+            accesskit_sdk_path="${{ github.workspace }}/accesskit-c-0.21.2/" \
+            d3d12=${{ steps.d3d12-sdk.outputs.enabled }} \
+            cache_path="${{ github.workspace }}/.scons_cache/" \
+            redirect_build_objects=no
+
+      - name: Save build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: lightforge-windows-editor
+        continue-on-error: true
+
+      - name: Verify engine binaries
+        id: binaries
+        shell: pwsh
+        run: |
+          $editor = @(Get-ChildItem bin -File -Filter "godot.windows.editor*.exe" |
+            Where-Object { $_.Name -notmatch '\.console\.exe$' })
+          $console = @(Get-ChildItem bin -File -Filter "godot.windows.editor*.console.exe")
+          if ($editor.Count -ne 1) {
+            throw "Expected one GUI editor executable, found $($editor.Count)"
+          }
+          if ($console.Count -ne 1) {
+            throw "Expected one console wrapper executable, found $($console.Count)"
+          }
+          "editor=$($editor[0].FullName)" >> $env:GITHUB_OUTPUT
+          "console=$($console[0].FullName)" >> $env:GITHUB_OUTPUT
+          & $console[0].FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
+          & $console[0].FullName --test
+          if ($LASTEXITCODE -ne 0) { throw "Engine unit tests failed" }
+
+      - name: Package baseline provenance
+        shell: pwsh
+        env:
+          EDITOR_PATH: ${{ steps.binaries.outputs.editor }}
+          CONSOLE_PATH: ${{ steps.binaries.outputs.console }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item -LiteralPath $env:EDITOR_PATH artifacts/Godot_Lightforge_4.6.3_baseline.exe
+          Copy-Item -LiteralPath $env:CONSOLE_PATH artifacts/Godot_Lightforge_4.6.3_baseline_console.exe
+          Copy-Item -LiteralPath LICENSE.txt artifacts/LICENSE.txt
+          Copy-Item -LiteralPath COPYRIGHT.txt artifacts/COPYRIGHT.txt
+          Copy-Item -LiteralPath AUTHORS.md artifacts/AUTHORS.md
+
+          $provenance = [ordered]@{
+            schema_version = 1
+            engine_repository = $env:GITHUB_REPOSITORY
+            engine_commit = (git rev-parse HEAD)
+            upstream_repository = "godotengine/godot"
+            upstream_tag = $env:BASE_TAG
+            upstream_commit = $env:BASE_COMMIT
+            build_name = $env:BUILD_NAME
+            build_platform = "windows"
+            build_target = "editor"
+            build_arch = "x86_64"
+            build_flags = "dev_mode=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
+            workflow = $env:GITHUB_WORKFLOW
+            workflow_run_id = $env:GITHUB_RUN_ID
+            workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT
+          }
+          $provenance | ConvertTo-Json | Set-Content -Encoding utf8 artifacts/provenance.json
+
+          $hashLines = Get-ChildItem artifacts -File |
+            Where-Object { $_.Name -ne "SHA256SUMS.txt" } |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+              "$hash  $($_.Name)"
+            }
+          $hashLines | Set-Content -Encoding ascii artifacts/SHA256SUMS.txt
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lightforge-godot-4.6.3-baseline-windows-x86_64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
