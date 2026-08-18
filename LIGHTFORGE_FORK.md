@@ -80,6 +80,11 @@ The fork repository variable `DISABLE_GODOT_CI=true` suppresses Godot's inherite
 all-platform matrix. It must remain set; the Lightforge workflow is the required
 gate for this patch line.
 
+Pull requests use the `lightforge-baseline` build identifier. A manual dispatch
+requires an explicit candidate identifier and defaults to
+`lightforge-profiler.1`; release artifacts must be produced from a merged
+`lightforge/4.6.3` commit with that candidate identifier.
+
 ## Distribution
 
 Development workflow artifacts are not releases and do not change Lightborn's

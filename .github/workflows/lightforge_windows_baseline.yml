@@ -5,6 +5,12 @@ on:
     branches:
       - lightforge/4.6.3
   workflow_dispatch:
+    inputs:
+      build_name:
+        description: Godot build identifier embedded in the candidate binaries
+        required: true
+        default: lightforge-profiler.1
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +22,7 @@ concurrency:
 env:
   BASE_TAG: 4.6.3-stable
   BASE_COMMIT: 35e80b3a8822a9df9be390814b62f44c0a9c69e8
-  BUILD_NAME: lightforge-baseline
+  BUILD_NAME: ${{ inputs.build_name || 'lightforge-baseline' }}
   SCONS_CACHE_MSVC_CONFIG: true
   PYTHONIOENCODING: utf8
 
