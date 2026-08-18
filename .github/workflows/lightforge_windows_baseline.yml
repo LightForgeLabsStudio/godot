@@ -5,11 +5,6 @@ on:
     branches:
       - lightforge/4.6.3
   workflow_dispatch:
-    inputs:
-      lightborn_ref:
-        description: Lightborn git ref used for the startup check
-        required: true
-        default: main
 
 permissions:
   contents: read
@@ -138,26 +133,6 @@ jobs:
           & $console[0].FullName --test
           if ($LASTEXITCODE -ne 0) { throw "Engine unit tests failed" }
 
-      - name: Checkout Lightborn
-        uses: actions/checkout@v6
-        with:
-          repository: LightForgeLabsStudio/LightbornExileDivinityEngine
-          ref: ${{ inputs.lightborn_ref || 'main' }}
-          path: lightborn
-          submodules: recursive
-
-      - name: Start Lightborn with unchanged engine
-        shell: pwsh
-        run: |
-          & "${{ steps.binaries.outputs.console }}" `
-            --headless `
-            --editor `
-            --path lightborn `
-            --quit-after 2
-          if ($LASTEXITCODE -ne 0) {
-            throw "Lightborn headless editor startup failed"
-          }
-
       - name: Package baseline provenance
         shell: pwsh
         env:
@@ -183,8 +158,6 @@ jobs:
             build_target = "editor"
             build_arch = "x86_64"
             build_flags = "dev_mode=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
-            lightborn_repository = "LightForgeLabsStudio/LightbornExileDivinityEngine"
-            lightborn_commit = (git -C lightborn rev-parse HEAD)
             workflow = $env:GITHUB_WORKFLOW
             workflow_run_id = $env:GITHUB_RUN_ID
             workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT

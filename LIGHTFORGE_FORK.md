@@ -63,14 +63,18 @@ produce one x86-64 editor build containing:
 - the GUI editor executable;
 - the console wrapper executable used by Lightborn tooling.
 
-The workflow runs Godot's built-in tests, starts the current Lightborn project in a
-headless editor, and packages:
+The workflow runs Godot's built-in tests and packages:
 
 - both executables;
 - `LICENSE.txt`, `COPYRIGHT.txt`, and `AUTHORS.md`;
-- `provenance.json` with engine source, upstream base, build flags, Lightborn source,
-  workflow, and run identifiers;
+- `provenance.json` with engine source, upstream base, build flags, workflow, and run
+  identifiers;
 - `SHA256SUMS.txt` covering the binaries and notices.
+
+The companion `lightforge_engine_acceptance.yml` workflow in the private Lightborn
+repository downloads this public artifact, verifies its checksums and provenance,
+and starts the unchanged game project. Keeping that check in Lightborn avoids
+granting the public fork credentials to the private game repository.
 
 The fork repository variable `DISABLE_GODOT_CI=true` suppresses Godot's inherited
 all-platform matrix. It must remain set; the Lightforge workflow is the required
