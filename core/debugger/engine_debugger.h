@@ -41,7 +41,7 @@ class ScriptDebugger;
 
 class EngineDebugger {
 public:
-	typedef void (*ProfilingToggle)(void *p_user, bool p_enable, const Array &p_opts);
+	typedef Error (*ProfilingToggle)(void *p_user, bool p_enable, const Array &p_opts);
 	typedef void (*ProfilingTick)(void *p_user, double p_frame_time, double p_process_time, double p_physics_time, double p_physics_frame_time);
 	typedef void (*ProfilingAdd)(void *p_user, const Array &p_arr);
 
@@ -121,7 +121,7 @@ public:
 	static void register_uri_handler(const String &p_protocol, CreatePeerFunc p_func);
 
 	void iteration(uint64_t p_frame_ticks, uint64_t p_process_ticks, uint64_t p_physics_ticks, double p_physics_frame_time);
-	void profiler_enable(const StringName &p_name, bool p_enabled, const Array &p_opts = Array());
+	Error profiler_enable(const StringName &p_name, bool p_enabled, const Array &p_opts = Array());
 	Error capture_parse(const StringName &p_name, const String &p_msg, const Array &p_args, bool &r_captured);
 
 	void line_poll() {

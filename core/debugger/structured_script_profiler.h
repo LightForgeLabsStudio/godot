@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  engine_profiler.cpp                                                   */
+/*  structured_script_profiler.h                                          */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,56 +28,72 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "engine_profiler.h"
+#pragma once
 
-#include "core/debugger/engine_debugger.h"
+#include "core/object/script_language.h"
+#include "core/os/mutex.h"
+#include "core/os/semaphore.h"
+#include "core/os/thread.h"
+#include "core/string/string_name.h"
+#include "core/templates/list.h"
+#include "core/templates/vector.h"
+#include "core/variant/array.h"
 
-void EngineProfiler::_bind_methods() {
-	GDVIRTUAL_BIND(_toggle, "enable", "options");
-	GDVIRTUAL_BIND(_add_frame, "data");
-	GDVIRTUAL_BIND(_tick, "frame_time", "process_time", "physics_time", "physics_frame_time");
-}
+class StructuredScriptProfilerWriter {
+public:
+	static constexpr int MAX_PENDING_CAPTURES = 8;
+	static constexpr int MAX_PROFILE_FUNCTIONS = 32768;
+	static constexpr uint64_t MAX_RECORD_BYTES = 1024 * 1024;
+	static constexpr uint64_t MAX_SESSION_BYTES = 8 * 1024 * 1024;
 
-void EngineProfiler::toggle(bool p_enable, const Array &p_array) {
-	GDVIRTUAL_CALL(_toggle, p_enable, p_array);
-}
+	struct Options {
+		String output_path;
+		String capture_id;
+		int max_functions = 0;
+	};
 
-void EngineProfiler::add(const Array &p_data) {
-	GDVIRTUAL_CALL(_add_frame, p_data);
-}
+	struct FunctionRecord {
+		StringName signature;
+		uint64_t calls = 0;
+		uint64_t self_us = 0;
+		uint64_t total_us = 0;
+	};
 
-void EngineProfiler::tick(double p_frame_time, double p_process_time, double p_physics_time, double p_physics_frame_time) {
-	GDVIRTUAL_CALL(_tick, p_frame_time, p_process_time, p_physics_time, p_physics_frame_time);
-}
+	struct Snapshot {
+		Options options;
+		String engine_version;
+		uint64_t started_ticks_usec = 0;
+		uint64_t stopped_ticks_usec = 0;
+		uint64_t sampled_frames = 0;
+		Vector<FunctionRecord> functions;
+	};
 
-Error EngineProfiler::bind(const String &p_name) {
-	ERR_FAIL_COND_V(is_bound(), ERR_ALREADY_IN_USE);
-	EngineDebugger::Profiler prof(
-			this,
-			[](void *p_user, bool p_enable, const Array &p_opts) {
-				static_cast<EngineProfiler *>(p_user)->toggle(p_enable, p_opts);
-				return OK;
-			},
-			[](void *p_user, const Array &p_data) {
-				static_cast<EngineProfiler *>(p_user)->add(p_data);
-			},
-			[](void *p_user, double p_frame_time, double p_process_time, double p_physics_time, double p_physics_frame_time) {
-				static_cast<EngineProfiler *>(p_user)->tick(p_frame_time, p_process_time, p_physics_time, p_physics_frame_time);
-			});
-	registration = p_name;
-	EngineDebugger::register_profiler(p_name, prof);
-	return OK;
-}
+private:
+	Mutex mutex;
+	Semaphore semaphore;
+	Thread thread;
+	List<Snapshot> queue;
+	bool started = false;
+	bool shutdown_requested = false;
 
-Error EngineProfiler::unbind() {
-	ERR_FAIL_COND_V(!is_bound(), ERR_UNCONFIGURED);
-	EngineDebugger::unregister_profiler(registration);
-	registration.clear();
-	return OK;
-}
+	static void _thread_func(void *p_userdata);
+	void _thread_loop();
+	Error _write_snapshot(const Snapshot &p_snapshot);
 
-EngineProfiler::~EngineProfiler() {
-	if (is_bound()) {
-		unbind();
-	}
-}
+public:
+	static Error parse_options(const Array &p_options, Options &r_options, bool &r_structured);
+	static Error copy_functions(const ScriptLanguage::ProfilingInfo *p_source, int p_count, Vector<FunctionRecord> &r_functions);
+	static Error serialize_snapshot(const Snapshot &p_snapshot, String &r_jsonl_record);
+
+	Error preflight(const Options &p_options) const;
+	Error start();
+	Error enqueue(const Snapshot &p_snapshot);
+	void shutdown();
+
+#ifdef TESTS_ENABLED
+	Error write_snapshot_for_test(const Snapshot &p_snapshot) { return _write_snapshot(p_snapshot); }
+	int pending_count_for_test() const;
+#endif
+
+	~StructuredScriptProfilerWriter();
+};

@@ -105,6 +105,8 @@
 			<param index="2" name="arguments" type="Array" default="[]" />
 			<description>
 				Calls the [code]toggle[/code] callable of the profiler with given [param name] and [param arguments]. Enables/Disables the same profiler depending on [param enable] argument.
+				When using the local debugger's [code]scripts[/code] profiler, passing a single dictionary containing [code]structured_output_version[/code] opts into structured output. Version [code]1[/code] requires exactly these entries: [code]structured_output_version = 1[/code], [code]output_format = "jsonl"[/code], an absolute [code]output_path[/code], a non-empty [code]capture_id[/code], [code]periodic_output = false[/code], [code]include_zero_calls = false[/code], [code]max_functions[/code] between [code]1[/code] and [code]32768[/code], and [code]async_write = true[/code]. Invalid structured options report an error and leave the profiler disabled.
+				Disabling a structured capture snapshots accumulated script timings, stops instrumentation, and queues one JSON Lines record for asynchronous writing. Records are ordered by descending self time and then signature, omit functions with no calls, and are bounded to 1 MiB each. At most eight captures may wait for the writer, and a session file may not exceed 8 MiB. Accepted records drain during debugger shutdown. Calls without [code]structured_output_version[/code] retain legacy profiler behavior.
 			</description>
 		</method>
 		<method name="register_message_capture">
