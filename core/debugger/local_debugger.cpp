@@ -63,9 +63,13 @@ struct LocalDebugger::ScriptsProfiler {
 			Error error = StructuredScriptProfilerWriter::parse_options(p_opts, parsed_options, structured_requested);
 			ERR_FAIL_COND_V(error != OK, error);
 			if (structured_requested) {
-				ERR_FAIL_COND_V_MSG(!writer_started, ERR_UNAVAILABLE, "The structured script profiler writer is unavailable.");
 				error = structured_writer.preflight(parsed_options);
 				ERR_FAIL_COND_V(error != OK, error);
+				if (!writer_started) {
+					error = structured_writer.start();
+					ERR_FAIL_COND_V(error != OK, error);
+					writer_started = true;
+				}
 			}
 
 			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
@@ -175,7 +179,6 @@ struct LocalDebugger::ScriptsProfiler {
 
 	ScriptsProfiler() {
 		idle_accum = OS::get_singleton()->get_ticks_usec();
-		writer_started = structured_writer.start() == OK;
 	}
 };
 
