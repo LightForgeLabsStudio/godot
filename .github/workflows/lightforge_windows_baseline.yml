@@ -292,12 +292,13 @@ jobs:
       - name: Download verified AccessKit dependency
         shell: bash
         run: |
-          mkdir -p accesskit-c-0.21.2
+          mkdir -p accesskit
           curl --fail --location \
-            --output accesskit-c-0.21.2/accesskit-c.zip \
+            --output accesskit.zip \
             https://github.com/godotengine/godot-accesskit-c-static/releases/download/0.21.2/accesskit-c-0.21.2.zip
-          printf '%s  %s\n' "${ACCESSKIT_SHA256}" accesskit-c-0.21.2/accesskit-c.zip | sha256sum --check --strict
-          unzip -q accesskit-c-0.21.2/accesskit-c.zip -d accesskit-c-0.21.2
+          printf '%s  %s\n' "${ACCESSKIT_SHA256}" accesskit.zip | sha256sum --check --strict
+          unzip -q accesskit.zip -d accesskit
+          mv accesskit/accesskit-c-* accesskit/accesskit-c
 
       - name: Build engine test binary
         uses: ./.github/actions/godot-build
@@ -307,7 +308,7 @@ jobs:
           scons-flags: >-
             dev_mode=yes
             module_text_server_fb_enabled=yes
-            accesskit_sdk_path=${{ github.workspace }}/accesskit-c-0.21.2/
+            accesskit_sdk_path=${{ github.workspace }}/accesskit/accesskit-c/
 
       - name: Run complete engine unit suite
         run: ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --force-colors
