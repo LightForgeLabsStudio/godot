@@ -54,7 +54,7 @@ jobs:
       - name: Restore build cache
         uses: ./.github/actions/godot-cache-restore
         with:
-          cache-name: lightforge-windows-editor
+          cache-name: lightforge-windows-editor-mingw
         continue-on-error: true
 
       - name: Set up Python and SCons
@@ -78,7 +78,7 @@ jobs:
         with:
           repo: godotengine/godot-angle-static
           version: tags/chromium/6601.2
-          file: godot-angle-static-x86_64-msvc-release.zip
+          file: godot-angle-static-x86_64-gcc-release.zip
           target: angle/angle.zip
 
       - name: Extract ANGLE static libraries
@@ -105,6 +105,7 @@ jobs:
             target=editor \
             arch=x86_64 \
             production=yes \
+            use_mingw=yes \
             debug_symbols=no \
             module_text_server_fb_enabled=yes \
             angle_libs="${{ github.workspace }}/" \
@@ -116,7 +117,7 @@ jobs:
       - name: Save build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: lightforge-windows-editor
+          cache-name: lightforge-windows-editor-mingw
         continue-on-error: true
 
       - name: Verify engine binaries
@@ -161,7 +162,7 @@ jobs:
             build_platform = "windows"
             build_target = "editor"
             build_arch = "x86_64"
-            build_flags = "production=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
+            build_flags = "production=yes use_mingw=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=gcc-static accesskit=static"
             workflow = $env:GITHUB_WORKFLOW
             workflow_run_id = $env:GITHUB_RUN_ID
             workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT
