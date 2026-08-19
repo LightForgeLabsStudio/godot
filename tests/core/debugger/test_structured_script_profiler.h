@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/debugger/engine_debugger.h"
+#include "core/debugger/local_debugger.h"
 #include "core/debugger/structured_script_profiler.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
@@ -304,6 +305,51 @@ TEST_CASE("[StructuredScriptProfiler] Failed toggles do not report an active pro
 	CHECK_FALSE(EngineDebugger::is_profiling(profiler_name));
 	ERR_PRINT_ON;
 	EngineDebugger::unregister_profiler(profiler_name);
+}
+
+TEST_CASE("[StructuredScriptProfiler] Local debugger starts the writer only for valid structured captures") {
+	const String output_path = TestUtils::get_temp_path("structured-local-debugger.jsonl");
+	LocalDebugger debugger;
+
+	CHECK_FALSE(debugger.is_scripts_profiler_writer_started_for_test());
+	CHECK(debugger.get_scripts_profiler_writer_successful_starts_for_test() == 0);
+
+	CHECK(debugger.scripts_profiler_toggle_for_test(true, Array()) == OK);
+	CHECK_FALSE(debugger.is_scripts_profiler_writer_started_for_test());
+	CHECK(debugger.scripts_profiler_toggle_for_test(false) == OK);
+
+	CHECK(debugger.scripts_profiler_toggle_for_test(true, make_options(output_path, "capture:first")) == OK);
+	CHECK(debugger.is_scripts_profiler_writer_started_for_test());
+	CHECK(debugger.get_scripts_profiler_writer_successful_starts_for_test() == 1);
+	CHECK(debugger.scripts_profiler_toggle_for_test(false) == OK);
+
+	CHECK(debugger.scripts_profiler_toggle_for_test(true, make_options(output_path, "capture:second")) == OK);
+	CHECK(debugger.get_scripts_profiler_writer_successful_starts_for_test() == 1);
+	CHECK(debugger.scripts_profiler_toggle_for_test(false) == OK);
+}
+
+TEST_CASE("[StructuredScriptProfiler] Local debugger retries a failed lazy writer start") {
+	const String output_path = TestUtils::get_temp_path("structured-local-debugger-retry.jsonl");
+	LocalDebugger debugger;
+	debugger.set_scripts_profiler_writer_start_failure_for_test(true);
+
+	ERR_PRINT_OFF;
+	CHECK(debugger.scripts_profiler_toggle_for_test(true, make_options(output_path, "capture:failed")) == ERR_UNAVAILABLE);
+	ERR_PRINT_ON;
+	CHECK_FALSE(debugger.is_scripts_profiler_writer_started_for_test());
+	CHECK(debugger.get_scripts_profiler_writer_successful_starts_for_test() == 0);
+
+	debugger.set_scripts_profiler_writer_start_failure_for_test(false);
+	CHECK(debugger.scripts_profiler_toggle_for_test(true, make_options(output_path, "capture:retry")) == OK);
+	CHECK(debugger.is_scripts_profiler_writer_started_for_test());
+	CHECK(debugger.get_scripts_profiler_writer_successful_starts_for_test() == 1);
+	CHECK(debugger.scripts_profiler_toggle_for_test(false) == OK);
+}
+
+TEST_CASE("[StructuredScriptProfiler] Local debugger destruction is safe without writer startup") {
+	LocalDebugger *debugger = memnew(LocalDebugger);
+	CHECK_FALSE(debugger->is_scripts_profiler_writer_started_for_test());
+	memdelete(debugger);
 }
 
 } // namespace TestStructuredScriptProfiler

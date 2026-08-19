@@ -465,3 +465,21 @@ LocalDebugger::~LocalDebugger() {
 		memdelete(scripts_profiler);
 	}
 }
+
+#ifdef TESTS_ENABLED
+Error LocalDebugger::scripts_profiler_toggle_for_test(bool p_enable, const Array &p_options) {
+	return scripts_profiler->toggle(p_enable, p_options);
+}
+
+bool LocalDebugger::is_scripts_profiler_writer_started_for_test() const {
+	return scripts_profiler->structured_writer.is_started_for_test();
+}
+
+void LocalDebugger::set_scripts_profiler_writer_start_failure_for_test(bool p_fail) {
+	scripts_profiler->structured_writer.set_fail_start_for_test(p_fail);
+}
+
+int LocalDebugger::get_scripts_profiler_writer_successful_starts_for_test() const {
+	return scripts_profiler->structured_writer.get_successful_starts_for_test();
+}
+#endif
