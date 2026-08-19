@@ -11,6 +11,14 @@ on:
         required: true
         default: lightforge-profiler.1
         type: string
+      source_revision:
+        description: Engine source revision to build
+        required: true
+        default: fork
+        type: choice
+        options:
+          - fork
+          - upstream
 
 permissions:
   contents: read
@@ -46,6 +54,11 @@ jobs:
           repository: godotengine/build-containers
           ref: ${{ env.BUILD_CONTAINERS_COMMIT }}
           path: build-containers
+
+      - name: Select untouched upstream control source
+        if: inputs.source_revision == 'upstream'
+        shell: bash
+        run: git checkout --detach "${BASE_COMMIT}"
 
       - name: Verify upstream base
         shell: pwsh
