@@ -203,10 +203,16 @@ Error StructuredScriptProfilerWriter::start() {
 	MutexLock lock(mutex);
 	ERR_FAIL_COND_V_MSG(started, ERR_ALREADY_IN_USE, "Structured script profiler writer is already started.");
 	ERR_FAIL_COND_V_MSG(shutdown_requested, ERR_UNCONFIGURED, "Structured script profiler writer has been shut down.");
+#ifdef TESTS_ENABLED
+	ERR_FAIL_COND_V_MSG(fail_start_for_test, ERR_UNAVAILABLE, "Structured script profiler writer start failure requested by test.");
+#endif
 	const int pending = queue.size();
 	thread.start(_thread_func, this);
 	ERR_FAIL_COND_V_MSG(!thread.is_started(), ERR_UNAVAILABLE, "Could not start the structured script profiler writer thread.");
 	started = true;
+#ifdef TESTS_ENABLED
+	successful_starts_for_test++;
+#endif
 	if (pending > 0) {
 		semaphore.post(pending);
 	}

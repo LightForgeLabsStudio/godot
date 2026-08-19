@@ -75,6 +75,10 @@ private:
 	List<Snapshot> queue;
 	bool started = false;
 	bool shutdown_requested = false;
+#ifdef TESTS_ENABLED
+	bool fail_start_for_test = false;
+	int successful_starts_for_test = 0;
+#endif
 
 	static void _thread_func(void *p_userdata);
 	void _thread_loop();
@@ -93,6 +97,9 @@ public:
 #ifdef TESTS_ENABLED
 	Error write_snapshot_for_test(const Snapshot &p_snapshot) { return _write_snapshot(p_snapshot); }
 	int pending_count_for_test() const;
+	bool is_started_for_test() const { return started; }
+	void set_fail_start_for_test(bool p_fail) { fail_start_for_test = p_fail; }
+	int get_successful_starts_for_test() const { return successful_starts_for_test; }
 #endif
 
 	~StructuredScriptProfilerWriter();

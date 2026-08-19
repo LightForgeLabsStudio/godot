@@ -63,9 +63,13 @@ struct LocalDebugger::ScriptsProfiler {
 			Error error = StructuredScriptProfilerWriter::parse_options(p_opts, parsed_options, structured_requested);
 			ERR_FAIL_COND_V(error != OK, error);
 			if (structured_requested) {
-				ERR_FAIL_COND_V_MSG(!writer_started, ERR_UNAVAILABLE, "The structured script profiler writer is unavailable.");
 				error = structured_writer.preflight(parsed_options);
 				ERR_FAIL_COND_V(error != OK, error);
+				if (!writer_started) {
+					error = structured_writer.start();
+					ERR_FAIL_COND_V(error != OK, error);
+					writer_started = true;
+				}
 			}
 
 			for (int i = 0; i < ScriptServer::get_language_count(); i++) {
@@ -175,7 +179,6 @@ struct LocalDebugger::ScriptsProfiler {
 
 	ScriptsProfiler() {
 		idle_accum = OS::get_singleton()->get_ticks_usec();
-		writer_started = structured_writer.start() == OK;
 	}
 };
 
@@ -462,3 +465,21 @@ LocalDebugger::~LocalDebugger() {
 		memdelete(scripts_profiler);
 	}
 }
+
+#ifdef TESTS_ENABLED
+Error LocalDebugger::scripts_profiler_toggle_for_test(bool p_enable, const Array &p_options) {
+	return scripts_profiler->toggle(p_enable, p_options);
+}
+
+bool LocalDebugger::is_scripts_profiler_writer_started_for_test() const {
+	return scripts_profiler->structured_writer.is_started_for_test();
+}
+
+void LocalDebugger::set_scripts_profiler_writer_start_failure_for_test(bool p_fail) {
+	scripts_profiler->structured_writer.set_fail_start_for_test(p_fail);
+}
+
+int LocalDebugger::get_scripts_profiler_writer_successful_starts_for_test() const {
+	return scripts_profiler->structured_writer.get_successful_starts_for_test();
+}
+#endif

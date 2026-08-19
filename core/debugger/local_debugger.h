@@ -53,4 +53,11 @@ public:
 
 	LocalDebugger();
 	~LocalDebugger();
+
+#ifdef TESTS_ENABLED
+	Error scripts_profiler_toggle_for_test(bool p_enable, const Array &p_options = Array());
+	bool is_scripts_profiler_writer_started_for_test() const;
+	void set_scripts_profiler_writer_start_failure_for_test(bool p_fail);
+	int get_scripts_profiler_writer_successful_starts_for_test() const;
+#endif
 };

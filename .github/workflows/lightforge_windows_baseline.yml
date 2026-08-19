@@ -11,6 +11,14 @@ on:
         required: true
         default: lightforge-profiler.1
         type: string
+      source_revision:
+        description: Engine source revision to build
+        required: true
+        default: fork
+        type: choice
+        options:
+          - fork
+          - upstream
 
 permissions:
   contents: read
@@ -22,22 +30,52 @@ concurrency:
 env:
   BASE_TAG: 4.6.3-stable
   BASE_COMMIT: 35e80b3a8822a9df9be390814b62f44c0a9c69e8
+  GODOT_BUILD_SCRIPTS_COMMIT: 039345862ec0a5476044076ca7414cb92f3b99c1
+  BUILD_CONTAINERS_COMMIT: 4150d2a1b766cc3ae7028fc477e677f57ab0bcd2
+  BUILD_CONTAINER_TAG: lightforge-4.6-f43
+  ANGLE_SHA256: 8b70c38be4120ba73d8f926b1b62929d9c59aebbb389197913ba69939e4815a1
+  MESA_SHA256: a4308ed4c1e2b496c8ab196c16a8a738eaa53554aba03656892f4402c5412914
+  ACCESSKIT_SHA256: 02a08691b78fc6f8f88f6546e997b9f90b4ecbedf5ca5c621dbab144a4b18964
+  WINRT_SHA256: 9310868d0a82d11b7ae1943c4f35c202c6c9a692ee2deec4bde241fbe2639961
   BUILD_NAME: ${{ inputs.build_name || 'lightforge-baseline' }}
-  SCONS_CACHE_MSVC_CONFIG: true
   PYTHONIOENCODING: utf8
 
 jobs:
   windows-editor:
     name: Windows editor and console baseline
-    runs-on: windows-latest
-    timeout-minutes: 120
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
 
     steps:
       - name: Checkout engine source
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           submodules: recursive
+
+      - name: Checkout official Godot build containers
+        uses: actions/checkout@v6
+        with:
+          repository: godotengine/build-containers
+          ref: ${{ env.BUILD_CONTAINERS_COMMIT }}
+          path: build-containers
+
+      - name: Record durable source identity
+        id: source
+        shell: bash
+        env:
+          FORK_HEAD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORK_BASE_COMMIT: ${{ github.event.pull_request.base.sha || env.BASE_COMMIT }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${FORK_HEAD_COMMIT}"
+          echo "fork_head_commit=${FORK_HEAD_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "fork_base_commit=${FORK_BASE_COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Select untouched upstream control source
+        if: inputs.source_revision == 'upstream'
+        shell: bash
+        run: git checkout --detach "${BASE_COMMIT}"
 
       - name: Verify upstream base
         shell: pwsh
@@ -54,69 +92,87 @@ jobs:
       - name: Restore build cache
         uses: ./.github/actions/godot-cache-restore
         with:
-          cache-name: lightforge-windows-editor
+          cache-name: lightforge-windows-editor-official-container
         continue-on-error: true
 
-      - name: Set up Python and SCons
-        uses: ./.github/actions/godot-deps
-        with:
-          scons-version: 4.10.1
-
-      - name: Download Direct3D 12 SDK components
-        id: d3d12-sdk
+      - name: Build official Godot 4.6 Windows container
+        id: container
         shell: bash
         run: |
-          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
-            echo "enabled=yes" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=no" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
+          docker pull fedora:43
+          base_digest=$(docker image inspect fedora:43 --format '{{index .RepoDigests 0}}')
+          docker build \
+            --tag godot-fedora:${BUILD_CONTAINER_TAG} \
+            --file build-containers/Dockerfile.base \
+            build-containers
+          docker build \
+            --build-arg img_version=${BUILD_CONTAINER_TAG} \
+            --tag godot-windows:${BUILD_CONTAINER_TAG} \
+            --file build-containers/Dockerfile.windows \
+            build-containers
+          windows_image_id=$(docker image inspect godot-windows:${BUILD_CONTAINER_TAG} --format '{{.Id}}')
+          gcc_version=$(docker run --rm godot-windows:${BUILD_CONTAINER_TAG} x86_64-w64-mingw32-g++ -dumpfullversion)
+          binutils_version=$(docker run --rm godot-windows:${BUILD_CONTAINER_TAG} x86_64-w64-mingw32-ld --version | head -n 1)
+          mingw_packages=$(docker run --rm godot-windows:${BUILD_CONTAINER_TAG} rpm -q mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static | paste -sd, -)
+          test -n "${base_digest}"
+          test -n "${windows_image_id}"
+          test -n "${gcc_version}"
+          test -n "${binutils_version}"
+          test -n "${mingw_packages}"
+          echo "base_digest=${base_digest}" >> "$GITHUB_OUTPUT"
+          echo "windows_image_id=${windows_image_id}" >> "$GITHUB_OUTPUT"
+          echo "gcc_version=${gcc_version}" >> "$GITHUB_OUTPUT"
+          echo "binutils_version=${binutils_version}" >> "$GITHUB_OUTPUT"
+          echo "mingw_packages=${mingw_packages}" >> "$GITHUB_OUTPUT"
 
-      - name: Download ANGLE static libraries
-        uses: dsaltares/fetch-gh-release-asset@1.1.2
-        with:
-          repo: godotengine/godot-angle-static
-          version: tags/chromium/6601.2
-          file: godot-angle-static-x86_64-msvc-release.zip
-          target: angle/angle.zip
-
-      - name: Extract ANGLE static libraries
-        shell: pwsh
-        run: Expand-Archive -Force angle/angle.zip ${{ github.workspace }}
-
-      - name: Download AccessKit static libraries
-        uses: dsaltares/fetch-gh-release-asset@1.1.2
-        with:
-          repo: godotengine/godot-accesskit-c-static
-          version: tags/0.21.2
-          file: accesskit-c-0.21.2.zip
-          target: accesskit-c-0.21.2/accesskit_c.zip
-
-      - name: Extract AccessKit static libraries
+      - name: Download official Godot 4.6 Windows dependencies
         shell: bash
-        run: unzip -o accesskit-c-0.21.2/accesskit_c.zip
+        run: |
+          mkdir -p deps/angle deps/mesa deps/accesskit deps/winrt
+          curl --fail --location \
+            --output deps/angle.zip \
+            https://github.com/godotengine/godot-angle-static/releases/download/chromium%2F7578/godot-angle-static-x86_64-gcc-13-release.zip
+          curl --fail --location \
+            --output deps/mesa.zip \
+            https://github.com/godotengine/godot-nir-static/releases/download/25.3.1-1/godot-nir-static-x86_64-gcc-release.zip
+          curl --fail --location \
+            --output deps/accesskit.zip \
+            https://github.com/godotengine/godot-accesskit-c-static/releases/download/0.21.2/accesskit-c-0.21.2.zip
+          curl --fail --location \
+            --output deps/winrt.zip \
+            https://github.com/godotengine/winrt-mingw/releases/download/72/winrt-headers.zip
+          printf '%s  %s\n' \
+            "${ANGLE_SHA256}" deps/angle.zip \
+            "${MESA_SHA256}" deps/mesa.zip \
+            "${ACCESSKIT_SHA256}" deps/accesskit.zip \
+            "${WINRT_SHA256}" deps/winrt.zip | sha256sum --check --strict
+          unzip -q deps/angle.zip -d deps/angle
+          unzip -q deps/mesa.zip -d deps/mesa
+          unzip -q deps/winrt.zip -d deps/winrt
+          (
+            cd deps/accesskit
+            unzip -q ../accesskit.zip
+            mv accesskit-c-* accesskit-c
+          )
 
       - name: Build Windows editor and console wrapper
         shell: bash
         run: |
-          scons \
-            platform=windows \
-            target=editor \
-            arch=x86_64 \
-            dev_mode=yes \
-            debug_symbols=no \
-            module_text_server_fb_enabled=yes \
-            angle_libs="${{ github.workspace }}/" \
-            accesskit_sdk_path="${{ github.workspace }}/accesskit-c-0.21.2/" \
-            d3d12=${{ steps.d3d12-sdk.outputs.enabled }} \
-            cache_path="${{ github.workspace }}/.scons_cache/" \
-            redirect_build_objects=no
+          docker run --rm \
+            --env BUILD_NAME \
+            --volume "${GITHUB_WORKSPACE}:/root/godot" \
+            --volume "${GITHUB_WORKSPACE}/deps/angle:/root/angle:ro" \
+            --volume "${GITHUB_WORKSPACE}/deps/mesa:/root/mesa:ro" \
+            --volume "${GITHUB_WORKSPACE}/deps/accesskit:/root/accesskit:ro" \
+            --volume "${GITHUB_WORKSPACE}/deps/winrt:/root/winrt:ro" \
+            --workdir /root/godot \
+            godot-windows:${BUILD_CONTAINER_TAG} \
+            bash -lc 'scons -j$(nproc) verbose=yes warnings=no progress=no redirect_build_objects=no platform=windows arch=x86_64 target=editor production=yes use_mingw=yes angle_libs=/root/angle mesa_libs=/root/mesa d3d12=yes accesskit_sdk_path=/root/accesskit/accesskit-c winrt_path=/root/winrt cache_path=/root/godot/.scons_cache'
 
       - name: Save build cache
         uses: ./.github/actions/godot-cache-save
         with:
-          cache-name: lightforge-windows-editor
+          cache-name: lightforge-windows-editor-official-container
         continue-on-error: true
 
       - name: Verify engine binaries
@@ -134,16 +190,19 @@ jobs:
           }
           "editor=$($editor[0].FullName)" >> $env:GITHUB_OUTPUT
           "console=$($console[0].FullName)" >> $env:GITHUB_OUTPUT
-          & $console[0].FullName --version
-          if ($LASTEXITCODE -ne 0) { throw "Version check failed" }
-          & $console[0].FullName --test
-          if ($LASTEXITCODE -ne 0) { throw "Engine unit tests failed" }
 
       - name: Package baseline provenance
         shell: pwsh
         env:
           EDITOR_PATH: ${{ steps.binaries.outputs.editor }}
           CONSOLE_PATH: ${{ steps.binaries.outputs.console }}
+          FORK_HEAD_COMMIT: ${{ steps.source.outputs.fork_head_commit }}
+          FORK_BASE_COMMIT: ${{ steps.source.outputs.fork_base_commit }}
+          CONTAINER_BASE_DIGEST: ${{ steps.container.outputs.base_digest }}
+          CONTAINER_IMAGE_ID: ${{ steps.container.outputs.windows_image_id }}
+          GCC_VERSION: ${{ steps.container.outputs.gcc_version }}
+          BINUTILS_VERSION: ${{ steps.container.outputs.binutils_version }}
+          MINGW_PACKAGES: ${{ steps.container.outputs.mingw_packages }}
         run: |
           New-Item -ItemType Directory -Force artifacts | Out-Null
           Copy-Item -LiteralPath $env:EDITOR_PATH artifacts/Godot_Lightforge_4.6.3_baseline.exe
@@ -159,11 +218,28 @@ jobs:
             upstream_repository = "godotengine/godot"
             upstream_tag = $env:BASE_TAG
             upstream_commit = $env:BASE_COMMIT
+            fork_head_commit = $env:FORK_HEAD_COMMIT
+            fork_base_commit = $env:FORK_BASE_COMMIT
             build_name = $env:BUILD_NAME
             build_platform = "windows"
             build_target = "editor"
             build_arch = "x86_64"
-            build_flags = "dev_mode=yes debug_symbols=no module_text_server_fb_enabled=yes d3d12=yes angle=static accesskit=static"
+            build_flags = "production=yes use_mingw=yes angle=chromium-7578-gcc-13-static mesa=25.3.1-1-gcc-static d3d12=yes accesskit=0.21.2-static winrt=72"
+            godot_build_scripts_commit = $env:GODOT_BUILD_SCRIPTS_COMMIT
+            build_container_repository = "godotengine/build-containers"
+            build_container_commit = $env:BUILD_CONTAINERS_COMMIT
+            build_container_image = "godot-windows:$env:BUILD_CONTAINER_TAG"
+            build_container_base_digest = $env:CONTAINER_BASE_DIGEST
+            build_container_image_id = $env:CONTAINER_IMAGE_ID
+            gcc_version = $env:GCC_VERSION
+            binutils_version = $env:BINUTILS_VERSION
+            mingw_packages = $env:MINGW_PACKAGES
+            dependency_sha256 = [ordered]@{
+              angle = $env:ANGLE_SHA256
+              mesa = $env:MESA_SHA256
+              accesskit = $env:ACCESSKIT_SHA256
+              winrt = $env:WINRT_SHA256
+            }
             workflow = $env:GITHUB_WORKFLOW
             workflow_run_id = $env:GITHUB_RUN_ID
             workflow_run_attempt = $env:GITHUB_RUN_ATTEMPT
@@ -186,3 +262,60 @@ jobs:
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
+
+  engine-tests:
+    name: Structured profiler engine tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout engine source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwayland-bin
+
+      - name: Restore build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: lightforge-linux-engine-tests
+        continue-on-error: true
+
+      - name: Set up Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download verified AccessKit dependency
+        shell: bash
+        run: |
+          mkdir -p accesskit
+          curl --fail --location \
+            --output accesskit.zip \
+            https://github.com/godotengine/godot-accesskit-c-static/releases/download/0.21.2/accesskit-c-0.21.2.zip
+          printf '%s  %s\n' "${ACCESSKIT_SHA256}" accesskit.zip | sha256sum --check --strict
+          unzip -q accesskit.zip -d accesskit
+          mv accesskit/accesskit-c-* accesskit/accesskit-c
+
+      - name: Build engine test binary
+        uses: ./.github/actions/godot-build
+        with:
+          platform: linuxbsd
+          target: editor
+          scons-flags: >-
+            dev_mode=yes
+            module_text_server_fb_enabled=yes
+            accesskit_sdk_path=${{ github.workspace }}/accesskit/accesskit-c/
+
+      - name: Run complete engine unit suite
+        run: ./bin/godot.linuxbsd.editor.x86_64 --headless --test --force-colors
+
+      - name: Save build cache
+        if: always()
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: lightforge-linux-engine-tests
+        continue-on-error: true
