@@ -311,7 +311,7 @@ jobs:
             accesskit_sdk_path=${{ github.workspace }}/accesskit/accesskit-c/
 
       - name: Run complete engine unit suite
-        run: ./bin/godot.linuxbsd.editor.dev.x86_64 --headless --test --force-colors
+        run: ./bin/godot.linuxbsd.editor.x86_64 --headless --test --force-colors
 
       - name: Save build cache
         if: always()
